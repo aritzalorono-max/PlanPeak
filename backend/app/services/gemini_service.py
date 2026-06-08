@@ -166,4 +166,4 @@ async def process_floor_plan(
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     logger.info(f"[phase1] done in {elapsed_ms}ms")
-    return metadata, structural_b64, elapsed_ms
+    return metadata, structural_b64, skeleton_b64, elapsed_ms

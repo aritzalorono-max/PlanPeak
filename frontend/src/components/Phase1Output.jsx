@@ -55,13 +55,14 @@ export default function Phase1Output({ sessionData, onProceed }) {
     )
   }
 
-  const { structuralImageB64, metadata, processingTimeMs } = sessionData.phase1
+  const { structuralImageB64, skeletonImageB64, metadata, processingTimeMs } = sessionData.phase1
   const originalSrc = sessionData.selectedPageB64
     ? `data:image/png;base64,${sessionData.selectedPageB64}`
     : sessionData.previewB64
     ? `data:image/png;base64,${sessionData.previewB64}`
     : null
   const structuralSrc = structuralImageB64 ? `data:image/png;base64,${structuralImageB64}` : null
+  const skeletonSrc = skeletonImageB64 ? `data:image/png;base64,${skeletonImageB64}` : null
 
   const rooms = metadata?.rooms || []
   const openings = metadata?.openings || []
@@ -88,7 +89,16 @@ export default function Phase1Output({ sessionData, onProceed }) {
             : <div style={styles.imagePlaceholder}>No original image</div>}
         </div>
         <div style={styles.imagePane}>
-          <p style={styles.imageLabel}>Structural</p>
+          <p style={styles.imageLabel}>Skeleton <span style={styles.labelNote}>(what Gemini sees)</span></p>
+          {skeletonSrc
+            ? <img src={skeletonSrc} alt="Wall skeleton" style={styles.image} />
+            : <div style={styles.imagePlaceholder}>Skeleton unavailable</div>}
+          <div style={styles.imageLegend}>
+            <span style={{color:'#000',fontWeight:700}}>—</span> Wall segments (Hough lines)
+          </div>
+        </div>
+        <div style={styles.imagePane}>
+          <p style={styles.imageLabel}>Structural <span style={styles.labelNote}>(final render)</span></p>
           {structuralSrc
             ? <img src={structuralSrc} alt="Structural floor plan" style={styles.image} />
             : <div style={styles.imagePlaceholder}>Structural render unavailable</div>}
@@ -151,7 +161,8 @@ const styles = {
     padding: '0.75rem 1rem', marginBottom: '1rem', color: '#e65100',
   },
   imageRow: { display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
-  imagePane: { flex: '1 1 420px', minWidth: 0 },
+  imagePane: { flex: '1 1 300px', minWidth: 0 },
+  labelNote: { fontSize: '0.75rem', color: '#888', fontWeight: 400 },
   imageLabel: { fontWeight: 600, margin: '0 0 0.25rem' },
   imageLegend: { fontSize: '0.78rem', color: '#555', marginBottom: '0.4rem' },
   image: { width: '100%', borderRadius: 8, border: '1px solid #ddd', display: 'block' },

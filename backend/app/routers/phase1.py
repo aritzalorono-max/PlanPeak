@@ -40,7 +40,7 @@ async def process_phase1(body: Phase1Request):
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        metadata, structural_b64, processing_time_ms = await gemini_service.process_floor_plan(
+        metadata, structural_b64, skeleton_b64, processing_time_ms = await gemini_service.process_floor_plan(
             image_b64, session_dir=session_dir
         )
     except Exception as e:
@@ -56,6 +56,7 @@ async def process_phase1(body: Phase1Request):
 
     return Phase1Response(
         structural_image_b64=structural_b64,
+        skeleton_image_b64=skeleton_b64,
         metadata=metadata,
         processing_time_ms=processing_time_ms,
     )
