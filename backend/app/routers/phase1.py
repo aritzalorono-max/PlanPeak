@@ -40,7 +40,9 @@ async def process_phase1(body: Phase1Request):
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        metadata, structural_b64, processing_time_ms = await gemini_service.process_floor_plan(image_b64)
+        metadata, structural_b64, processing_time_ms = await gemini_service.process_floor_plan(
+            image_b64, session_dir=session_dir
+        )
     except Exception as e:
         logger.error(f"Gemini processing failed for session {body.session_id}: {e}")
         raise HTTPException(status_code=500, detail=f"AI processing failed: {e}")
