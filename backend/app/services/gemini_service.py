@@ -14,7 +14,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.5-flash"
 VERTEX_PROJECT = "gen-lang-client-0434074228"
 VERTEX_LOCATION = "us-central1"
 
@@ -74,7 +74,7 @@ def _call_metadata(image_b64: str) -> Any:
             ],
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=4096,
+                max_output_tokens=8192,
             ),
         )
 
