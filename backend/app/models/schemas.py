@@ -72,8 +72,8 @@ class FloorPlanMetadata(BaseModel):
 
 
 class Phase1Response(BaseModel):
-    structural_image_b64: Optional[str]
-    skeleton_image_b64: Optional[str]  # now: contrast-enhanced image sent to Gemini
+    structural_image_b64: Optional[str]   # cleaned image (no furniture) from Vertex AI
+    skeleton_image_b64: Optional[str]     # same image shown in middle panel
     metadata: Any
     processing_time_ms: int
 

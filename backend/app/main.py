@@ -19,6 +19,13 @@ settings = get_settings()
 # Ensure temp upload directory exists at startup
 Path(settings.tmp_dir).mkdir(parents=True, exist_ok=True)
 
+# Write Google service account credentials from env var to disk (Railway / production)
+if settings.google_credentials_json:
+    creds_path = Path("/tmp/google_credentials.json")
+    creds_path.write_text(settings.google_credentials_json)
+    os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = str(creds_path)
+    logger.info(f"[startup] Google credentials written to {creds_path}")
+
 app = FastAPI(
     title="PlanPeak API",
     description="Convert 2D architectural floor plans (PNG/PDF) to DXF using AI + OpenCV.",

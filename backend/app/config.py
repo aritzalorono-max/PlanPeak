@@ -4,6 +4,9 @@ from functools import lru_cache
 
 class Settings(BaseSettings):
     gemini_api_key: str = ""
+    google_credentials_json: str = ""   # full JSON content of service account key
+    gcp_project: str = "gen-lang-client-0434074228"
+    gcp_location: str = "us-central1"
     tmp_dir: str = "/tmp/planpeak"
     max_upload_size_mb: int = 50
 

@@ -1,100 +1,117 @@
 """
-gemini_service.py — Gemini Vision wrapper for Phase 1.
+gemini_service.py — Phase 1: furniture removal via Vertex AI image generation.
 
-Gemini receives a contrast-enhanced version of the original floor plan
-and is asked to identify structural walls (as line segments) plus
-rooms and openings. No pre-filtering of the image — the model decides.
+Sends the original floor plan to Gemini 2.0 Flash (Vertex AI) and asks it
+to return a new image with only structural elements (walls, doors, windows).
+Image generation is only available via Vertex AI, not the standard API key.
 """
 
 import asyncio
 import base64
 import json
 import logging
+import os
 import time
 from pathlib import Path
 from typing import Optional, Tuple, Any
 
-import os
 from google import genai
 from google.genai import types
 
 from app.config import get_settings
-from app.services.processing import (
-    prepare_for_gemini,
-    validate_openings,
-    render_structural,
-)
+from app.services.processing import get_image_dimensions
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.5-flash"
-VERTEX_PROJECT = "gen-lang-client-0434074228"
-VERTEX_LOCATION = "us-central1"
+IMAGE_GEN_MODEL = "gemini-2.0-flash-preview-image-generation"
+LABELING_MODEL = "gemini-2.5-flash"
 
-ARCHITECT_PROMPT = """Analiza esta imagen de planta arquitectónica.
+CLEANING_PROMPT = (
+    "Genera una nueva imagen de esta planta arquitectónica eliminando todo el mobiliario "
+    "(camas, sofás, mesas, sillas, electrodomésticos, bañeras, inodoros, etc.) y las cotas "
+    "de medición. Conserva únicamente los muros estructurales, columnas, ventanas y puertas. "
+    "Pinta los muros y columnas en negro sobre fondo blanco. "
+    "Las ventanas en azul y las puertas (incluidas correderas) en rojo. "
+    "El resultado debe ser una imagen limpia de planta arquitectónica solo con la estructura."
+)
 
-Eres un arquitecto veterano con 20 años de experiencia leyendo planos de construcción.
-
-TAREA PRINCIPAL: Identifica el layout estructural del edificio.
-
-LOS MUROS son las líneas más GRUESAS y SÓLIDAS que definen el perímetro de las estancias y separan los espacios. Tienen un grosor visible (no son líneas finas). Forman una red cerrada que delimita habitaciones.
-
-IGNORA COMPLETAMENTE: mobiliario (camas, sofás, mesas, sillas, electrodomésticos, bañeras, inodoros), cotas de medición, flechas, textos, líneas de dimensión (líneas finas con números), tramas de relleno decorativas.
-
-Para cada muro estructural, devuelve las coordenadas de píxel de inicio y fin como segmento de línea [x1, y1, x2, y2].
-
-Devuelve ÚNICAMENTE un objeto JSON válido. Sin markdown. Sin explicación.
+LABELING_PROMPT = """Analyze this architectural floor plan image.
+Return ONLY a JSON object. No markdown. No explanation.
 
 {
-  "scale_references": [
-    {"value": "4.50", "unit": "m", "bbox": [x1, y1, x2, y2]}
-  ],
-  "rooms": [
-    {
-      "type": "kitchen|bathroom|bedroom|living_room|hallway|dining_room|garage|terrace|unknown",
-      "bbox": [x1, y1, x2, y2],
-      "label": ""
-    }
-  ],
-  "wall_segments": [
-    {"start": [x1, y1], "end": [x2, y2]}
-  ],
-  "openings": [
-    {"type": "door|sliding_door|window", "bbox": [x1, y1, x2, y2]}
-  ],
+  "scale_references": [{"value": "4.50", "unit": "m", "bbox": [x1, y1, x2, y2]}],
+  "rooms": [{"type": "kitchen|bathroom|bedroom|living_room|hallway|dining_room|garage|terrace|unknown", "bbox": [x1, y1, x2, y2], "label": ""}],
+  "openings": [{"type": "door|sliding_door|window", "bbox": [x1, y1, x2, y2]}],
   "image_dimensions": {"width": 0, "height": 0},
   "estimated_scale": "1:50"
 }
 
-bbox = [izquierda, arriba, derecha, abajo] en coordenadas de píxel.
-wall_segments: coordenadas de la línea central de cada muro.
-Devuelve ÚNICAMENTE JSON válido."""
+bbox = [left, top, right, bottom] pixel coordinates. Return ONLY valid JSON."""
 
 
-def _get_client() -> genai.Client:
-    sa_path = os.path.abspath(
-        os.path.join(os.path.dirname(__file__), "../../../../service_account.json")
+def _get_vertex_client() -> genai.Client:
+    settings = get_settings()
+    return genai.Client(
+        vertexai=True,
+        project=settings.gcp_project,
+        location=settings.gcp_location,
     )
-    if os.path.exists(sa_path):
-        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_path
-        return genai.Client(vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION)
+
+
+def _get_api_client() -> genai.Client:
     return genai.Client(api_key=get_settings().gemini_api_key)
 
 
-def _call_gemini(image_b64: str) -> Any:
-    """Send image to Gemini for architect-vision analysis."""
+def _remove_furniture(image_b64: str) -> Optional[str]:
+    """
+    Send original floor plan to Gemini via Vertex AI.
+    Returns base64 PNG of the cleaned structural image, or None on failure.
+    """
     try:
-        client = _get_client()
+        client = _get_vertex_client()
         image_bytes = base64.b64decode(image_b64)
+
         response = client.models.generate_content(
-            model=GEMINI_MODEL,
+            model=IMAGE_GEN_MODEL,
             contents=[
                 types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                ARCHITECT_PROMPT,
+                CLEANING_PROMPT,
+            ],
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE"],
+            ),
+        )
+
+        for part in response.candidates[0].content.parts:
+            if hasattr(part, "inline_data") and part.inline_data:
+                logger.info("[gemini] received generated image")
+                return base64.b64encode(part.inline_data.data).decode("utf-8")
+
+        logger.warning("[gemini] no image part in response")
+        return None
+
+    except Exception as e:
+        logger.error(f"[gemini] image generation failed: {e}")
+        return None
+
+
+def _label_floor_plan(image_b64: str) -> Any:
+    """
+    Run semantic labeling on the (cleaned) image to extract rooms/openings/scale.
+    Falls back to API key if Vertex AI is not configured.
+    """
+    try:
+        client = _get_api_client()
+        image_bytes = base64.b64decode(image_b64)
+        response = client.models.generate_content(
+            model=LABELING_MODEL,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                LABELING_PROMPT,
             ],
             config=types.GenerateContentConfig(
                 temperature=1,
-                max_output_tokens=32768,
+                max_output_tokens=16384,
                 response_mime_type="application/json",
                 thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
@@ -104,9 +121,9 @@ def _call_gemini(image_b64: str) -> Any:
             return json.loads(raw)
         except json.JSONDecodeError as je:
             logger.warning(f"[gemini] JSON parse error: {je}")
-            return {"error": f"JSON parse error: {je}", "raw_response": raw[:500]}
+            return {"error": str(je), "raw_response": raw[:500]}
     except Exception as e:
-        logger.error(f"[gemini] call failed: {e}")
+        logger.error(f"[gemini] labeling failed: {e}")
         return {"error": str(e)}
 
 
@@ -116,50 +133,42 @@ async def process_floor_plan(
 ) -> Tuple[Any, Optional[str], str, int]:
     """
     Phase 1 pipeline:
-      1. CLAHE contrast enhancement (preserve image structure)
-      2. Gemini architect-vision analysis (walls + rooms + openings)
-      3. validate_openings (remove tiny/invalid bboxes)
-      4. render_structural (white canvas + wall segments + colored openings)
+      1. Send original image to Vertex AI → receive cleaned image (no furniture)
+      2. Run labeling on cleaned image → rooms, openings, scale
+      3. Return (metadata, cleaned_image_b64, original_b64, elapsed_ms)
 
-    Returns: (metadata, structural_image_b64, prepared_b64, processing_time_ms)
+    If Vertex AI image generation fails, structural_b64 will be None
+    and the original image is shown instead.
     """
     start = time.monotonic()
     loop = asyncio.get_event_loop()
 
-    # Step 1: minimal pre-processing
-    logger.info("[phase1] preparing image...")
-    prepared_b64, image_shape = await loop.run_in_executor(
-        None,
-        lambda: prepare_for_gemini(image_b64, debug_dir=session_dir),
-    )
-    logger.info(f"[phase1] image ready: shape={image_shape}")
+    h, w = await loop.run_in_executor(None, get_image_dimensions, image_b64)
+    image_shape = (h, w)
+    logger.info(f"[phase1] image {w}×{h}")
 
-    # Step 2: Gemini architect vision
-    logger.info("[phase1] calling Gemini (architect vision)...")
-    metadata = await loop.run_in_executor(None, _call_gemini, prepared_b64)
+    # Step 1: remove furniture via Vertex AI image generation
+    logger.info("[phase1] calling Vertex AI for furniture removal...")
+    structural_b64 = await loop.run_in_executor(None, _remove_furniture, image_b64)
+
+    if structural_b64:
+        logger.info("[phase1] furniture removal successful")
+        label_target = structural_b64
+    else:
+        logger.warning("[phase1] furniture removal failed — labeling original image")
+        label_target = image_b64
+
+    # Step 2: label the cleaned (or original) image
+    logger.info("[phase1] labeling floor plan...")
+    metadata = await loop.run_in_executor(None, _label_floor_plan, label_target)
     logger.info(
-        f"[phase1] Gemini result: rooms={len(metadata.get('rooms', []))}, "
-        f"walls={len(metadata.get('wall_segments', []))}, "
+        f"[phase1] rooms={len(metadata.get('rooms', []))}, "
         f"openings={len(metadata.get('openings', []))}, "
         f"error={metadata.get('error')}"
     )
 
-    # Step 3: validate openings
-    if "error" not in metadata:
-        metadata = await loop.run_in_executor(
-            None, validate_openings, metadata, image_shape
-        )
-
-    # Step 4: render structural image from wall_segments + openings
-    wall_segments = [
-        (int(s["start"][0]), int(s["start"][1]), int(s["end"][0]), int(s["end"][1]))
-        for s in metadata.get("wall_segments", [])
-        if s.get("start") and s.get("end")
-    ]
-    structural_b64 = await loop.run_in_executor(
-        None, render_structural, wall_segments, image_shape, metadata
-    )
-
     elapsed_ms = int((time.monotonic() - start) * 1000)
     logger.info(f"[phase1] done in {elapsed_ms}ms")
-    return metadata, structural_b64, prepared_b64, elapsed_ms
+
+    # skeleton_image_b64 slot now holds the cleaned structural image
+    return metadata, structural_b64, structural_b64 or image_b64, elapsed_ms
