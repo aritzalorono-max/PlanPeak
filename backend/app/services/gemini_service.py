@@ -251,23 +251,20 @@ def _render_structural_pil(image_b64: str, metadata: dict) -> Optional[str]:
 async def process_floor_plan(image_b64: str) -> Tuple[Any, Optional[str], int]:
     """
     Phase 1 pipeline:
-      1. OpenCV: remove dimension lines from image
-      2. Gemini: extract metadata (rooms, openings, scale) from cleaned image
-      3. Validate: discard openings not touching wall pixels
-      4. PIL: render structural overlay on original image
+      1. Gemini: extract metadata from original image
+      2. Validate: discard openings not touching wall pixels
+      3. PIL: render structural overlay on original image
 
     Returns: (metadata, structural_image_b64, processing_time_ms)
     """
     start = time.monotonic()
     loop = asyncio.get_event_loop()
 
-    # Layer 1: remove dimension lines (fast, sync)
-    preprocessed_b64 = await loop.run_in_executor(None, _preprocess_remove_dimensions, image_b64)
+    # Layer 1: Gemini metadata on original image
+    metadata = await loop.run_in_executor(None, _call_metadata, image_b64)
+    logger.info(f"Gemini metadata: rooms={len(metadata.get('rooms', []))}, openings={len(metadata.get('openings', []))}, error={metadata.get('error')}")
 
-    # Layer 2: Gemini metadata on pre-processed image
-    metadata = await loop.run_in_executor(None, _call_metadata, preprocessed_b64)
-
-    # Layer 3: validate openings against original image wall pixels
+    # Layer 2: validate openings against original image wall pixels
     if "error" not in metadata:
         metadata = await loop.run_in_executor(None, _validate_openings, image_b64, metadata)
 
