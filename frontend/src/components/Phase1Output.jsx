@@ -89,14 +89,14 @@ export default function Phase1Output({ sessionData, onProceed }) {
         </div>
         <div style={styles.imagePane}>
           <p style={styles.imageLabel}>Structural</p>
+          {structuralSrc
+            ? <img src={structuralSrc} alt="Structural floor plan" style={styles.image} />
+            : <div style={styles.imagePlaceholder}>Structural render unavailable</div>}
           <div style={styles.imageLegend}>
             <span style={{color:'#000',fontWeight:700}}>■</span> Walls &nbsp;
             <span style={{color:'red',fontWeight:700}}>■</span> Doors &nbsp;
             <span style={{color:'blue',fontWeight:700}}>■</span> Windows
           </div>
-          {structuralSrc
-            ? <img src={structuralSrc} alt="Structural floor plan" style={styles.image} />
-            : <div style={styles.imagePlaceholder}>Structural render unavailable</div>}
         </div>
       </div>
 
