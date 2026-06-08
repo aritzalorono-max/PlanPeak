@@ -73,9 +73,10 @@ def _call_metadata(image_b64: str) -> Any:
                 METADATA_PROMPT,
             ],
             config=types.GenerateContentConfig(
-                temperature=0.1,
-                max_output_tokens=16384,
+                temperature=1,
+                max_output_tokens=24576,
                 response_mime_type="application/json",
+                thinking_config=types.ThinkingConfig(thinking_budget=0),
             ),
         )
 
