@@ -1,13 +1,9 @@
 """
-processing.py — minimal pre-processing for Phase 1.
+processing.py — image preparation for Phase 1.
 
-Pipeline:
-  1. Decode image
-  2. Grayscale + CLAHE contrast enhancement (black=black, white=white)
-  3. Re-encode as PNG for Gemini
-
-No skeletonization, no HoughLinesP, no thresholding.
-Gemini receives a clean high-contrast version of the original.
+Only operation: resize to max 1024px (longest side) preserving aspect ratio.
+No filtering, no thresholding, no CV manipulation.
+Gemini receives the original floor plan image.
 """
 
 import base64
@@ -20,35 +16,40 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
+MAX_SIDE = 1024
+
 
 def prepare_for_gemini(
     image_b64: str,
     debug_dir: Optional[Path] = None,
 ) -> Tuple[str, Tuple[int, int]]:
     """
-    Minimal pre-processing: grayscale + CLAHE contrast boost.
+    Resize to max 1024px longest side, preserve aspect ratio.
 
     Returns:
-        prepared_b64  – base64 PNG ready for Gemini
-        image_shape   – (height, width) of the image
+        prepared_b64  – base64 PNG
+        image_shape   – (height, width) of the resized image
     """
     nparr = np.frombuffer(base64.b64decode(image_b64), np.uint8)
-    img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-    if img_bgr is None:
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+    if img is None:
         raise ValueError("Could not decode image")
 
-    h, w = img_bgr.shape[:2]
-    logger.info(f"[processing] image {w}×{h}")
+    h, w = img.shape[:2]
+    scale = min(MAX_SIDE / max(h, w), 1.0)  # never upscale
+    if scale < 1.0:
+        new_w, new_h = int(w * scale), int(h * scale)
+        img = cv2.resize(img, (new_w, new_h), interpolation=cv2.INTER_AREA)
+        h, w = new_h, new_w
+        logger.info(f"[processing] resized to {w}×{h}")
+    else:
+        logger.info(f"[processing] keeping original size {w}×{h}")
 
     if debug_dir is not None:
-        debug_path = Path(debug_dir) / "debug_prepared.png"
-        cv2.imwrite(str(debug_path), img_bgr)
-        logger.info(f"[processing] DEBUG prepared image saved → {debug_path}")
+        cv2.imwrite(str(Path(debug_dir) / "debug_prepared.png"), img)
 
-    # Re-encode as PNG to normalize format; no other processing
-    ok, buf = cv2.imencode(".png", img_bgr)
+    ok, buf = cv2.imencode(".png", img)
     prepared_b64 = base64.b64encode(buf).decode("utf-8") if ok else image_b64
-
     return prepared_b64, (h, w)
 
 
@@ -57,9 +58,7 @@ def validate_openings(
     image_shape: Tuple[int, int],
     min_area_px: int = 50,
 ) -> dict:
-    """
-    Basic validation: remove openings with zero or tiny bboxes.
-    """
+    """Remove openings with zero or tiny bboxes."""
     h, w = image_shape
     valid, n_removed = [], 0
 
@@ -72,8 +71,7 @@ def validate_openings(
         x2, y2 = min(w, x2), min(h, y2)
         if x2 <= x1 or y2 <= y1:
             continue
-        area = (x2 - x1) * (y2 - y1)
-        if area < min_area_px:
+        if (x2 - x1) * (y2 - y1) < min_area_px:
             n_removed += 1
             continue
         valid.append(op)
@@ -88,12 +86,8 @@ def render_structural(
     metadata: dict,
 ) -> Optional[str]:
     """
-    Render structural floor plan from wall segments + openings.
-
-    - White background
-    - Black lines (3px) for each wall segment
-    - Red semi-transparent rectangles: doors / sliding doors
-    - Blue semi-transparent rectangles: windows
+    White canvas + black wall lines (3px) + colored opening rectangles.
+    Doors/sliding doors = red, windows = blue.
     """
     try:
         import io
@@ -113,10 +107,8 @@ def render_structural(
             bbox = op.get("bbox")
             if not bbox or len(bbox) != 4:
                 continue
-            otype = op.get("type", "")
-            color = (0, 80, 220, 200) if otype == "window" else (220, 30, 30, 200)
-            x1, y1, x2, y2 = [int(v) for v in bbox]
-            draw.rectangle([x1, y1, x2, y2], fill=color)
+            color = (0, 80, 220, 200) if op.get("type") == "window" else (220, 30, 30, 200)
+            draw.rectangle([int(v) for v in bbox], fill=color)
 
         result = Image.alpha_composite(pil, overlay).convert("RGB")
         buf = io.BytesIO()

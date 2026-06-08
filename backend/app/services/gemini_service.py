@@ -31,25 +31,19 @@ GEMINI_MODEL = "gemini-2.5-flash"
 VERTEX_PROJECT = "gen-lang-client-0434074228"
 VERTEX_LOCATION = "us-central1"
 
-ARCHITECT_PROMPT = """You are a veteran architect analyzing a floor plan image.
+ARCHITECT_PROMPT = """Analiza esta imagen de planta arquitectónica.
 
-Your task: identify ALL structural walls in this plan.
+Eres un arquitecto veterano con 20 años de experiencia leyendo planos de construcción.
 
-WALLS are the thick, solid lines that define the perimeter of rooms and separate spaces.
-IGNORE completely: furniture (beds, sofas, tables, chairs, kitchen appliances, bathtubs),
-dimension lines, measurement arrows, text labels, hatch patterns, thin decorative lines.
+TAREA PRINCIPAL: Identifica el layout estructural del edificio.
 
-A structural wall is recognizable because:
-- It is thick (solid filled rectangle or double line with fill)
-- It forms a closed boundary or connects to other walls
-- It separates two distinct spaces or forms the building perimeter
+LOS MUROS son las líneas más GRUESAS y SÓLIDAS que definen el perímetro de las estancias y separan los espacios. Tienen un grosor visible (no son líneas finas). Forman una red cerrada que delimita habitaciones.
 
-For each wall, return its start and end pixel coordinates as a line segment [x1, y1, x2, y2].
+IGNORA COMPLETAMENTE: mobiliario (camas, sofás, mesas, sillas, electrodomésticos, bañeras, inodoros), cotas de medición, flechas, textos, líneas de dimensión (líneas finas con números), tramas de relleno decorativas.
 
-Also identify rooms (the enclosed spaces), openings (doors and windows at gaps in walls),
-and scale references if visible.
+Para cada muro estructural, devuelve las coordenadas de píxel de inicio y fin como segmento de línea [x1, y1, x2, y2].
 
-Return ONLY a JSON object. No markdown. No explanation.
+Devuelve ÚNICAMENTE un objeto JSON válido. Sin markdown. Sin explicación.
 
 {
   "scale_references": [
@@ -72,9 +66,9 @@ Return ONLY a JSON object. No markdown. No explanation.
   "estimated_scale": "1:50"
 }
 
-bbox = [left, top, right, bottom] pixel coordinates.
-wall_segments: pixel coordinates of wall centerlines.
-Return ONLY valid JSON."""
+bbox = [izquierda, arriba, derecha, abajo] en coordenadas de píxel.
+wall_segments: coordenadas de la línea central de cada muro.
+Devuelve ÚNICAMENTE JSON válido."""
 
 
 def _get_client() -> genai.Client:
