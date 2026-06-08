@@ -141,42 +141,35 @@ def _clean_image_opencv(image_b64: str) -> Optional[str]:
         return None
 
 
-def _render_structural(image_b64: str, metadata: dict) -> Optional[str]:
+def _render_structural(cleaned_b64: Optional[str], original_b64: str, metadata: dict) -> Optional[str]:
     """
-    Render a structural floor plan using detected walls, openings.
-    - Walls/columns: black filled rectangles
-    - Doors: red filled rectangles
+    Render structural floor plan by overlaying semantic colors onto the OpenCV-cleaned image.
+    - Base: cleaned B&W image (walls already accurate from OpenCV)
+    - Doors (type door|sliding_door): red filled rectangles
     - Windows: blue filled rectangles
     """
     try:
+        import io
         from PIL import Image, ImageDraw
 
-        image_bytes = base64.b64decode(image_b64)
-        original = Image.open(__import__("io").BytesIO(image_bytes)).convert("RGB")
-        w, h = original.size
+        source_b64 = cleaned_b64 if cleaned_b64 else original_b64
+        image_bytes = base64.b64decode(source_b64)
+        base_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        canvas = Image.new("RGB", (w, h), "white")
-        draw = ImageDraw.Draw(canvas)
+        draw = ImageDraw.Draw(base_img, "RGBA")
 
-        walls = metadata.get("walls", [])
         openings = metadata.get("openings", [])
-
-        for wall in walls:
-            bbox = wall.get("bbox")
-            if bbox and len(bbox) == 4:
-                draw.rectangle(bbox, fill="black")
-
         for opening in openings:
             bbox = opening.get("bbox")
             if not bbox or len(bbox) != 4:
                 continue
             otype = opening.get("type", "")
-            color = "blue" if otype == "window" else "red"
+            # Semi-transparent fill so wall structure shows through
+            color = (0, 0, 200, 160) if otype == "window" else (200, 0, 0, 160)
             draw.rectangle(bbox, fill=color)
 
-        import io
         buf = io.BytesIO()
-        canvas.save(buf, format="PNG")
+        base_img.convert("RGB").save(buf, format="PNG")
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
     except Exception as e:
@@ -203,7 +196,7 @@ async def process_floor_plan(
     cleaned_b64, metadata = await asyncio.gather(cleaning_future, metadata_future)
 
     structural_b64 = await loop.run_in_executor(
-        None, _render_structural, image_b64, metadata
+        None, _render_structural, cleaned_b64, image_b64, metadata
     )
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
