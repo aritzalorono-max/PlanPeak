@@ -18,34 +18,33 @@ GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp"
 VERTEX_PROJECT = "gen-lang-client-0434074228"
 VERTEX_LOCATION = "us-central1"
 
-METADATA_PROMPT = """You are a metadata extractor for architectural floor plans.
-Analyze this floor plan image carefully and return a JSON object with this EXACT structure.
-Do not include any explanation or markdown — return ONLY the JSON object.
+METADATA_PROMPT = """You are an expert at reading architectural floor plan drawings.
+Analyze this floor plan and return ONLY a JSON object with this exact structure. No markdown, no explanation.
 
 {
   "scale_references": [
-    {"value": "4.50", "unit": "m", "bbox": [x1, y1, x2, y2], "wall_bbox": [x1, y1, x2, y2]}
+    {"value": "4.50", "unit": "m", "bbox": [x1, y1, x2, y2]}
   ],
   "rooms": [
-    {"type": "kitchen|bathroom|bedroom|living_room|hallway|dining_room|garage|terrace|unknown", "bbox": [x1, y1, x2, y2], "label": "original text visible in image or empty string"}
+    {"type": "kitchen|bathroom|bedroom|living_room|hallway|dining_room|garage|terrace|unknown", "bbox": [x1, y1, x2, y2], "label": "text label visible in room or empty string"}
   ],
   "openings": [
-    {"type": "door|sliding_door|window", "bbox": [x1, y1, x2, y2], "wall_direction": "horizontal|vertical"}
-  ],
-  "walls": [
-    {"layer": "load_bearing_wall|partition_wall", "estimated_thickness_cm": 20, "bbox": [x1, y1, x2, y2]}
+    {"type": "door|sliding_door|window", "bbox": [x1, y1, x2, y2]}
   ],
   "image_dimensions": {"width": 0, "height": 0},
-  "estimated_scale": "1:100",
-  "north_arrow": {"detected": false, "bbox": null}
+  "estimated_scale": "1:50"
 }
 
-Rules:
-- bbox coordinates are pixel positions [left, top, right, bottom] relative to the image
-- Classify walls: thickness > 25cm = load_bearing_wall, thickness < 15cm = partition_wall
-- For scale_references, find dimension lines (numbers with measurement marks like arrows or ticks)
-- Detect ALL rooms visible in the plan
-- Return ONLY valid JSON"""
+CRITICAL RULES for openings detection:
+- "door": shown as a quarter-circle arc (swing arc) with a straight line — the bbox must tightly wrap the arc + line together
+- "sliding_door": shown as a rectangle with one or two parallel lines inside (no arc) — typically in a wall gap
+- "window": shown as a short double line or triple line segment embedded in a wall (no arc, no swing) — bbox wraps only the wall segment with the window lines
+- DO NOT mark dimension lines, measurement arrows, or annotation lines as openings
+- DO NOT mark hatching patterns as windows
+- Only mark actual architectural openings in walls
+
+bbox = pixel coordinates [left, top, right, bottom] relative to the image. Be precise.
+Return ONLY valid JSON."""
 
 STRUCTURAL_PROMPT = (
     "This is an architectural floor plan. Generate a new clean image of this same floor plan "
