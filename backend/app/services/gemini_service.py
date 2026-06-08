@@ -14,7 +14,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.5-flash"
-GEMINI_IMAGE_MODEL = "gemini-2.0-flash-preview-image-generation"
+GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp"
 VERTEX_PROJECT = "gen-lang-client-0434074228"
 VERTEX_LOCATION = "us-central1"
 
