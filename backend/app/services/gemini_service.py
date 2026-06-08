@@ -15,6 +15,7 @@ from app.config import get_settings
 logger = logging.getLogger(__name__)
 
 GEMINI_MODEL = "gemini-2.5-flash"
+GEMINI_IMAGE_MODEL = "gemini-2.0-flash-exp"
 VERTEX_PROJECT = "gen-lang-client-0434074228"
 VERTEX_LOCATION = "us-central1"
 
@@ -141,39 +142,41 @@ def _clean_image_opencv(image_b64: str) -> Optional[str]:
         return None
 
 
-def _render_structural(cleaned_b64: Optional[str], original_b64: str, metadata: dict) -> Optional[str]:
-    """
-    Render structural floor plan by overlaying semantic colors onto the OpenCV-cleaned image.
-    - Base: cleaned B&W image (walls already accurate from OpenCV)
-    - Doors (type door|sliding_door): red filled rectangles
-    - Windows: blue filled rectangles
-    """
+STRUCTURAL_PROMPT = (
+    "This is an architectural floor plan. Generate a new image of this floor plan "
+    "keeping ONLY the structural elements: walls, columns, doors, sliding doors, and windows. "
+    "Remove everything else: dimensions, measurements, furniture, text labels, hatching, and annotations. "
+    "Color the output as follows: walls and columns in black, windows in blue, doors and sliding doors in red. "
+    "Use a white background. Keep the exact same scale and proportions as the original."
+)
+
+
+def _gemini_render_structural(image_b64: str) -> Optional[str]:
+    """Ask Gemini to generate a structural-only floor plan image."""
     try:
-        import io
-        from PIL import Image, ImageDraw
+        client = _get_client()
+        image_bytes = base64.b64decode(image_b64)
 
-        source_b64 = cleaned_b64 if cleaned_b64 else original_b64
-        image_bytes = base64.b64decode(source_b64)
-        base_img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
+        response = client.models.generate_content(
+            model=GEMINI_IMAGE_MODEL,
+            contents=[
+                types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+                STRUCTURAL_PROMPT,
+            ],
+            config=types.GenerateContentConfig(
+                response_modalities=["IMAGE", "TEXT"],
+            ),
+        )
 
-        draw = ImageDraw.Draw(base_img, "RGBA")
+        for part in response.candidates[0].content.parts:
+            if part.inline_data and part.inline_data.mime_type.startswith("image/"):
+                return base64.b64encode(part.inline_data.data).decode("utf-8")
 
-        openings = metadata.get("openings", [])
-        for opening in openings:
-            bbox = opening.get("bbox")
-            if not bbox or len(bbox) != 4:
-                continue
-            otype = opening.get("type", "")
-            # Semi-transparent fill so wall structure shows through
-            color = (0, 0, 200, 160) if otype == "window" else (200, 0, 0, 160)
-            draw.rectangle(bbox, fill=color)
-
-        buf = io.BytesIO()
-        base_img.convert("RGB").save(buf, format="PNG")
-        return base64.b64encode(buf.getvalue()).decode("utf-8")
+        logger.warning("Gemini image generation returned no image part")
+        return None
 
     except Exception as e:
-        logger.error(f"Structural render failed: {e}")
+        logger.error(f"Gemini structural render failed: {e}")
         return None
 
 
@@ -192,11 +195,10 @@ async def process_floor_plan(
 
     cleaning_future = loop.run_in_executor(None, _clean_image_opencv, image_b64)
     metadata_future = loop.run_in_executor(None, _call_metadata, image_b64)
+    structural_future = loop.run_in_executor(None, _gemini_render_structural, image_b64)
 
-    cleaned_b64, metadata = await asyncio.gather(cleaning_future, metadata_future)
-
-    structural_b64 = await loop.run_in_executor(
-        None, _render_structural, cleaned_b64, image_b64, metadata
+    cleaned_b64, metadata, structural_b64 = await asyncio.gather(
+        cleaning_future, metadata_future, structural_future
     )
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
