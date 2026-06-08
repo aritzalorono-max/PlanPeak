@@ -37,23 +37,16 @@ def prepare_for_gemini(
     if img_bgr is None:
         raise ValueError("Could not decode image")
 
-    gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-    h, w = gray.shape
+    h, w = img_bgr.shape[:2]
     logger.info(f"[processing] image {w}×{h}")
-
-    # CLAHE: enhances local contrast so walls are clearly darker than background
-    clahe = cv2.createCLAHE(clipLimit=2.0, tileGridSize=(8, 8))
-    enhanced = clahe.apply(gray)
-
-    # Convert back to 3-channel PNG (Gemini handles color fine)
-    enhanced_bgr = cv2.cvtColor(enhanced, cv2.COLOR_GRAY2BGR)
 
     if debug_dir is not None:
         debug_path = Path(debug_dir) / "debug_prepared.png"
-        cv2.imwrite(str(debug_path), enhanced_bgr)
+        cv2.imwrite(str(debug_path), img_bgr)
         logger.info(f"[processing] DEBUG prepared image saved → {debug_path}")
 
-    ok, buf = cv2.imencode(".png", enhanced_bgr)
+    # Re-encode as PNG to normalize format; no other processing
+    ok, buf = cv2.imencode(".png", img_bgr)
     prepared_b64 = base64.b64encode(buf).decode("utf-8") if ok else image_b64
 
     return prepared_b64, (h, w)
