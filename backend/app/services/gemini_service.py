@@ -13,7 +13,7 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.0-flash"
+GEMINI_MODEL = "gemini-2.0-flash-lite"
 
 METADATA_PROMPT = """You are a metadata extractor for architectural floor plans.
 Analyze this floor plan image carefully and return a JSON object with this EXACT structure.
