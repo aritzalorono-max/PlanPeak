@@ -6,6 +6,7 @@ import time
 from pathlib import Path
 from typing import Optional, Tuple, Any
 
+import os
 from google import genai
 from google.genai import types
 
@@ -13,7 +14,9 @@ from app.config import get_settings
 
 logger = logging.getLogger(__name__)
 
-GEMINI_MODEL = "gemini-2.0-flash-lite"
+GEMINI_MODEL = "gemini-2.0-flash"
+VERTEX_PROJECT = "gen-lang-client-0434074228"
+VERTEX_LOCATION = "us-central1"
 
 METADATA_PROMPT = """You are a metadata extractor for architectural floor plans.
 Analyze this floor plan image carefully and return a JSON object with this EXACT structure.
@@ -46,6 +49,12 @@ Rules:
 
 
 def _get_client() -> genai.Client:
+    # Use Vertex AI with service account if available, else fall back to API key
+    sa_path = os.path.join(os.path.dirname(__file__), "../../../../service_account.json")
+    sa_path = os.path.abspath(sa_path)
+    if os.path.exists(sa_path):
+        os.environ["GOOGLE_APPLICATION_CREDENTIALS"] = sa_path
+        return genai.Client(vertexai=True, project=VERTEX_PROJECT, location=VERTEX_LOCATION)
     settings = get_settings()
     return genai.Client(api_key=settings.gemini_api_key)
 
