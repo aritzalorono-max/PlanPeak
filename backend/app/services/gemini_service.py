@@ -74,20 +74,12 @@ def _call_metadata(image_b64: str) -> Any:
             ],
             config=types.GenerateContentConfig(
                 temperature=0.1,
-                max_output_tokens=8192,
+                max_output_tokens=16384,
+                response_mime_type="application/json",
             ),
         )
 
         raw = response.text.strip() if response.text else ""
-
-        # Strip markdown code fences if present
-        for prefix in ("```json", "```"):
-            if raw.startswith(prefix):
-                raw = raw[len(prefix):]
-                break
-        if raw.endswith("```"):
-            raw = raw[:-3]
-        raw = raw.strip()
 
         try:
             return json.loads(raw)
