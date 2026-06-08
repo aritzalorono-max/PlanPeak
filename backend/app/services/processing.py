@@ -66,34 +66,36 @@ def build_wall_skeleton(
         blockSize=15, C=4,
     )
 
-    # ── 3. Morphological close — seal small gaps in wall outlines ─────────────
-    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (3, 3))
-    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_k, iterations=1)
+    # ── 3. Morphological close — seal gaps in wall outlines (5×5, 2 iter) ──────
+    # Larger kernel + 2 iterations ensures broken wall segments reconnect
+    close_k = cv2.getStructuringElement(cv2.MORPH_RECT, (5, 5))
+    binary = cv2.morphologyEx(binary, cv2.MORPH_CLOSE, close_k, iterations=2)
 
     # ── 4. Erosion — destroy strokes < 3px (furniture, hatch, dim lines) ─────
     erode_k = np.ones((3, 3), np.uint8)
     thick_only = cv2.erode(binary, erode_k, iterations=1)
 
-    # ── 5. Dilation — restore wall thickness ─────────────────────────────────
+    # ── 5. Dilation — restore wall thickness (3 iterations for thicker walls) ─
     dilate_k = np.ones((3, 3), np.uint8)
-    thick_only = cv2.dilate(thick_only, dilate_k, iterations=2)
+    thick_only = cv2.dilate(thick_only, dilate_k, iterations=3)
 
     # ── 6. Skeletonize (scikit-image) — reduce to 1px axis lines ─────────────
     bool_mask = thick_only > 0
     skel_bool = skimage_skeletonize(bool_mask)
     skel = (skel_bool.astype(np.uint8)) * 255
 
-    # ── 7. HoughLinesP — keep only long wall segments ─────────────────────────
+    # ── 7. HoughLinesP — more permissive: shorter min_len, larger gap ─────────
     diagonal = math.sqrt(h * h + w * w)
-    min_len = max(30, int(diagonal * 0.035))   # ~3.5% of diagonal = minimum wall
-    logger.info(f"[processing] HoughLinesP min_length={min_len}px")
+    min_len = max(20, int(diagonal * 0.020))   # 2% diagonal (was 3.5%) → catches shorter walls
+    max_gap = 18                                # was 10 → bridges small breaks in wall lines
+    logger.info(f"[processing] HoughLinesP min_length={min_len}px max_gap={max_gap}px")
 
     lines_raw = cv2.HoughLinesP(
         skel,
         rho=1, theta=np.pi / 180,
-        threshold=15,
+        threshold=12,           # was 15 → more sensitive
         minLineLength=min_len,
-        maxLineGap=10,
+        maxLineGap=max_gap,
     )
     wall_lines: List[Tuple[int, int, int, int]] = []
     if lines_raw is not None:
