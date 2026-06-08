@@ -77,13 +77,14 @@ export default function Phase1Output({ sessionData, onProceed }) {
     )
   }
 
-  const { cleanedImageB64, metadata, processingTimeMs } = sessionData.phase1
+  const { cleanedImageB64, structuralImageB64, metadata, processingTimeMs } = sessionData.phase1
   const originalSrc = sessionData.selectedPageB64
     ? `data:image/png;base64,${sessionData.selectedPageB64}`
     : sessionData.previewB64
     ? `data:image/png;base64,${sessionData.previewB64}`
     : null
   const cleanedSrc = cleanedImageB64 ? `data:image/png;base64,${cleanedImageB64}` : null
+  const structuralSrc = structuralImageB64 ? `data:image/png;base64,${structuralImageB64}` : null
 
   const rooms = metadata?.rooms || []
   const openings = metadata?.openings || []
@@ -104,7 +105,7 @@ export default function Phase1Output({ sessionData, onProceed }) {
         </div>
       )}
 
-      {/* Split image view */}
+      {/* Three-way image view */}
       <div style={styles.imageRow}>
         <div style={styles.imagePane}>
           <p style={styles.imageLabel}>Original</p>
@@ -115,12 +116,27 @@ export default function Phase1Output({ sessionData, onProceed }) {
           )}
         </div>
         <div style={styles.imagePane}>
-          <p style={styles.imageLabel}>Cleaned (Gemini)</p>
+          <p style={styles.imageLabel}>Cleaned (OpenCV)</p>
           {cleanedSrc ? (
             <img src={cleanedSrc} alt="Cleaned floor plan" style={styles.image} />
           ) : (
+            <div style={styles.imagePlaceholder}>Cleaned image unavailable</div>
+          )}
+        </div>
+        <div style={styles.imagePane}>
+          <p style={styles.imageLabel}>Structural</p>
+          <div style={styles.imageLegend}>
+            <span style={{color:'#000', fontWeight:700}}>■</span> Walls &nbsp;
+            <span style={{color:'red', fontWeight:700}}>■</span> Doors &nbsp;
+            <span style={{color:'blue', fontWeight:700}}>■</span> Windows
+          </div>
+          {structuralSrc ? (
+            <img src={structuralSrc} alt="Structural floor plan" style={styles.image} />
+          ) : (
             <div style={styles.imagePlaceholder}>
-              Cleaned image unavailable — Gemini did not return a valid image.
+              {metadata?.walls?.length === 0 && metadata?.openings?.length === 0
+                ? 'No walls or openings detected yet'
+                : 'Structural render unavailable'}
             </div>
           )}
         </div>
@@ -203,7 +219,8 @@ const styles = {
     padding: '0.75rem 1rem', marginBottom: '1rem', color: '#e65100',
   },
   imageRow: { display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
-  imagePane: { flex: '1 1 420px', minWidth: 0 },
+  imagePane: { flex: '1 1 300px', minWidth: 0 },
+  imageLegend: { fontSize: '0.78rem', color: '#555', marginBottom: '0.4rem' },
   imageLabel: { fontWeight: 600, margin: '0 0 0.5rem' },
   image: { width: '100%', borderRadius: 8, border: '1px solid #ddd', display: 'block' },
   imagePlaceholder: {

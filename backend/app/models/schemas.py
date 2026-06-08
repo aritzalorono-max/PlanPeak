@@ -73,6 +73,7 @@ class FloorPlanMetadata(BaseModel):
 
 class Phase1Response(BaseModel):
     cleaned_image_b64: Optional[str]
+    structural_image_b64: Optional[str]
     metadata: Any  # FloorPlanMetadata or dict with error
     processing_time_ms: int
 

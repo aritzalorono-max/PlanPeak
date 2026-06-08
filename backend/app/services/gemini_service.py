@@ -140,14 +140,58 @@ def _clean_image_opencv(image_b64: str) -> Optional[str]:
         return None
 
 
+def _render_structural(image_b64: str, metadata: dict) -> Optional[str]:
+    """
+    Render a structural floor plan using detected walls, openings.
+    - Walls/columns: black filled rectangles
+    - Doors: red filled rectangles
+    - Windows: blue filled rectangles
+    """
+    try:
+        from PIL import Image, ImageDraw
+
+        image_bytes = base64.b64decode(image_b64)
+        original = Image.open(__import__("io").BytesIO(image_bytes)).convert("RGB")
+        w, h = original.size
+
+        canvas = Image.new("RGB", (w, h), "white")
+        draw = ImageDraw.Draw(canvas)
+
+        walls = metadata.get("walls", [])
+        openings = metadata.get("openings", [])
+
+        for wall in walls:
+            bbox = wall.get("bbox")
+            if bbox and len(bbox) == 4:
+                draw.rectangle(bbox, fill="black")
+
+        for opening in openings:
+            bbox = opening.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            otype = opening.get("type", "")
+            color = "blue" if otype == "window" else "red"
+            draw.rectangle(bbox, fill=color)
+
+        import io
+        buf = io.BytesIO()
+        canvas.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
+
+    except Exception as e:
+        logger.error(f"Structural render failed: {e}")
+        return None
+
+
 async def process_floor_plan(
     image_b64: str,
-) -> Tuple[Optional[str], Any, int]:
+) -> Tuple[Optional[str], Any, Optional[str], int]:
     """
-    Run image cleaning (OpenCV) and metadata extraction (Gemini) in parallel.
+    Run image cleaning (OpenCV) and metadata extraction (Gemini) in parallel,
+    then render a structural view from the metadata.
 
     Returns:
-        Tuple of (cleaned_image_b64 or None, metadata_dict, processing_time_ms).
+        Tuple of (cleaned_image_b64, metadata_dict, structural_image_b64, processing_time_ms).
     """
     start = time.monotonic()
     loop = asyncio.get_event_loop()
@@ -157,5 +201,9 @@ async def process_floor_plan(
 
     cleaned_b64, metadata = await asyncio.gather(cleaning_future, metadata_future)
 
+    structural_b64 = await loop.run_in_executor(
+        None, _render_structural, image_b64, metadata
+    )
+
     elapsed_ms = int((time.monotonic() - start) * 1000)
-    return cleaned_b64, metadata, elapsed_ms
+    return cleaned_b64, metadata, structural_b64, elapsed_ms

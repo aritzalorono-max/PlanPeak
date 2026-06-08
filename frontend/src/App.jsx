@@ -46,6 +46,7 @@ export default function App() {
       ...prev,
       phase1: {
         cleanedImageB64: result.cleaned_image_b64,
+        structuralImageB64: result.structural_image_b64,
         metadata: result.metadata,
         processingTimeMs: result.processing_time_ms,
       },

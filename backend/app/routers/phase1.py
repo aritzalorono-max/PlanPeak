@@ -54,7 +54,7 @@ async def process_phase1(body: Phase1Request):
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        cleaned_b64, metadata, processing_time_ms = await gemini_service.process_floor_plan(
+        cleaned_b64, metadata, structural_b64, processing_time_ms = await gemini_service.process_floor_plan(
             image_b64
         )
     except Exception as e:
@@ -67,12 +67,18 @@ async def process_phase1(body: Phase1Request):
         async with aiofiles.open(cleaned_path, "wb") as f:
             await f.write(base64.b64decode(cleaned_b64))
 
+    if structural_b64:
+        structural_path = session_dir / "phase1_structural.png"
+        async with aiofiles.open(structural_path, "wb") as f:
+            await f.write(base64.b64decode(structural_b64))
+
     metadata_path = session_dir / "phase1_metadata.json"
     async with aiofiles.open(metadata_path, "w") as f:
         await f.write(json.dumps(metadata, ensure_ascii=False, indent=2))
 
     return Phase1Response(
         cleaned_image_b64=cleaned_b64,
+        structural_image_b64=structural_b64,
         metadata=metadata,
         processing_time_ms=processing_time_ms,
     )
