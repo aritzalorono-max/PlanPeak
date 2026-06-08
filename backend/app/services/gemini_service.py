@@ -17,7 +17,9 @@ GEMINI_MODEL = "gemini-2.5-flash"
 VERTEX_PROJECT = "gen-lang-client-0434074228"
 VERTEX_LOCATION = "us-central1"
 
-METADATA_PROMPT = """You are a CAD expert analyzing an architectural floor plan drawing.
+# Prompt sent with the Canny pre-processed image
+METADATA_PROMPT = """You are a CAD expert analyzing a pre-processed architectural floor plan.
+This image has been filtered so that only continuous structural lines remain visible.
 Return ONLY a JSON object — no markdown, no explanation.
 
 {
@@ -25,7 +27,8 @@ Return ONLY a JSON object — no markdown, no explanation.
     {"value": "4.50", "unit": "m", "bbox": [x1, y1, x2, y2]}
   ],
   "rooms": [
-    {"type": "kitchen|bathroom|bedroom|living_room|hallway|dining_room|garage|terrace|unknown", "bbox": [x1, y1, x2, y2], "label": "text label visible in room or empty string"}
+    {"type": "kitchen|bathroom|bedroom|living_room|hallway|dining_room|garage|terrace|unknown",
+     "bbox": [x1, y1, x2, y2], "label": "text label visible in room or empty string"}
   ],
   "openings": [
     {"type": "door|sliding_door|window", "bbox": [x1, y1, x2, y2]}
@@ -34,17 +37,12 @@ Return ONLY a JSON object — no markdown, no explanation.
   "estimated_scale": "1:50"
 }
 
-STRICT RULES for opening detection:
-- Only detect openings PHYSICALLY INTEGRATED INTO A WALL — they are interruptions in the wall line.
-- "door": a quarter-circle swing arc with a straight line at its base, set into a gap in the wall.
-- "sliding_door": a rectangular gap in the wall with parallel lines inside, no arc.
-- "window": a short double or triple line embedded in the wall thickness (no arc, no swing).
-- NEVER mark dimension lines, measurement arrows, leader lines, or hatching as openings.
-- NEVER mark elements floating in the middle of a room as openings.
-- An opening that does not interrupt a wall line is NOT an opening — discard it.
-
-bbox = pixel coordinates [left, top, right, bottom]. Be precise.
-Return ONLY valid JSON."""
+RULES:
+- Only detect openings that ARE GAPS/INTERRUPTIONS in thick wall lines.
+  A door is a gap in a thick wall with a swing arc. A window is a gap with a double line.
+- NEVER mark thin isolated lines, hatching, text, or anything inside a room as an opening.
+- A gap in a thin line is NOT an opening — only gaps in thick wall lines count.
+bbox = [left, top, right, bottom] in pixels. Return ONLY valid JSON."""
 
 
 def _get_client() -> genai.Client:
@@ -56,12 +54,61 @@ def _get_client() -> genai.Client:
     return genai.Client(api_key=settings.gemini_api_key)
 
 
-# ── Gemini metadata extraction ────────────────────────────────────────────────
+# ── Step 1: Canny pre-processing ─────────────────────────────────────────────
 
-def _call_metadata(image_b64: str) -> Any:
+def _preprocess_canny(image_b64: str) -> Tuple[str, "np.ndarray", "np.ndarray"]:
+    """
+    Convert floor plan to a high-contrast structural image via Canny edges.
+    Returns (canny_b64_for_gemini, wall_mask, original_gray).
+
+    wall_mask: binary mask of thick-line pixels only (walls, not furniture).
+    canny_b64: edge image suitable for Gemini to identify wall gaps.
+    """
+    import cv2
+    import numpy as np
+
+    image_bytes = base64.b64decode(image_b64)
+    nparr = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
+
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+    h, w = gray.shape
+
+    # ── Wall mask: thick lines survive 3×3 erosion, thin lines die ──────────
+    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+    erode_k = np.ones((3, 3), np.uint8)
+    eroded = cv2.erode(binary, erode_k, iterations=1)
+    dilate_k = np.ones((3, 3), np.uint8)
+    wall_mask = cv2.dilate(eroded, dilate_k, iterations=2)
+
+    # ── Canny image for Gemini ───────────────────────────────────────────────
+    blurred = cv2.GaussianBlur(gray, (3, 3), 0)
+    edges = cv2.Canny(blurred, 40, 120)
+
+    # Morphological close to reconnect broken wall edges
+    close_k = np.ones((3, 3), np.uint8)
+    closed = cv2.morphologyEx(edges, cv2.MORPH_CLOSE, close_k, iterations=2)
+
+    # Dilate wall edges so they're visibly thick (helps Gemini)
+    thick_k = np.ones((2, 2), np.uint8)
+    canny_thick = cv2.dilate(closed, thick_k, iterations=1)
+
+    # White background, black edges
+    canny_canvas = np.ones((h, w), dtype=np.uint8) * 255
+    canny_canvas[canny_thick > 0] = 0
+
+    success, buffer = cv2.imencode(".png", canny_canvas)
+    canny_b64 = base64.b64encode(buffer).decode("utf-8") if success else image_b64
+
+    return canny_b64, wall_mask, gray
+
+
+# ── Step 2: Gemini metadata on Canny image ────────────────────────────────────
+
+def _call_metadata(canny_b64: str) -> Any:
     try:
         client = _get_client()
-        image_bytes = base64.b64decode(image_b64)
+        image_bytes = base64.b64decode(canny_b64)
         response = client.models.generate_content(
             model=GEMINI_MODEL,
             contents=[
@@ -79,160 +126,75 @@ def _call_metadata(image_b64: str) -> Any:
         try:
             return json.loads(raw)
         except json.JSONDecodeError as je:
-            logger.warning(f"Gemini metadata JSON parse error: {je}")
+            logger.warning(f"Gemini JSON parse error: {je}")
             return {"error": f"JSON parse error: {je}", "raw_response": raw[:500]}
     except Exception as e:
-        logger.error(f"Gemini metadata call failed: {e}")
+        logger.error(f"Gemini call failed: {e}")
         return {"error": str(e)}
 
 
-# ── OpenCV: detect wall mask (thick continuous lines) ────────────────────────
+# ── Step 3: Validate openings against wall mask ───────────────────────────────
 
-def _detect_wall_mask(gray: "np.ndarray") -> "np.ndarray":
+def _validate_openings(wall_mask: "np.ndarray", metadata: dict) -> dict:
     """
-    Return a binary mask of wall pixels.
-    Walls are thick (≥3px) dark lines. Furniture lines are thin (1-2px).
-    Strategy: erode with 3x3 kernel to destroy thin lines → only thick survive.
-    Then dilate back to restore wall width.
+    Discard openings whose bbox doesn't border wall-mask pixels on ≥2 sides.
+    Uses the thick-line wall_mask — thin furniture lines are already excluded.
     """
-    import cv2
     import numpy as np
 
-    _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
+    h, w = wall_mask.shape
+    valid, discarded = [], 0
 
-    # Erode: thin lines (1-2px) disappear, thick walls survive
-    erode_k = np.ones((3, 3), np.uint8)
-    eroded = cv2.erode(binary, erode_k, iterations=1)
-
-    # Dilate back to original thickness + a little extra for coverage
-    dilate_k = np.ones((3, 3), np.uint8)
-    wall_mask = cv2.dilate(eroded, dilate_k, iterations=2)
-
-    return wall_mask
-
-
-# ── OpenCV: filter non-wall components (furniture, annotations) ───────────────
-
-def _filter_non_wall_components(binary: "np.ndarray", wall_mask: "np.ndarray") -> "np.ndarray":
-    """
-    Connected-component analysis: keep only components that overlap with
-    the wall mask. Everything else (furniture, annotations, hatching, etc.)
-    is isolated inside rooms and does not touch any wall → discard.
-    """
-    import cv2
-    import numpy as np
-
-    num_labels, labels, stats, _ = cv2.connectedComponentsWithStats(binary, connectivity=8)
-
-    clean_mask = np.zeros_like(binary)
-    kept = 0
-    removed = 0
-
-    for i in range(1, num_labels):  # 0 = background
-        area = stats[i, cv2.CC_STAT_AREA]
-        if area < 4:  # skip microscopic noise
+    for opening in metadata.get("openings", []):
+        bbox = opening.get("bbox")
+        if not bbox or len(bbox) != 4:
             continue
-        component = (labels == i).astype(np.uint8) * 255
-        overlap = cv2.bitwise_and(component, wall_mask)
-        if overlap.any():
-            clean_mask = cv2.bitwise_or(clean_mask, component)
-            kept += 1
+        x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
+        x1, y1 = max(0, x1), max(0, y1)
+        x2, y2 = min(w, x2), min(h, y2)
+        if x2 <= x1 or y2 <= y1:
+            continue
+
+        m = 10
+        sides = sum([
+            wall_mask[max(0, y1-m):y1, x1:x2].any(),
+            wall_mask[y2:min(h, y2+m), x1:x2].any(),
+            wall_mask[y1:y2, max(0, x1-m):x1].any(),
+            wall_mask[y1:y2, x2:min(w, x2+m)].any(),
+        ])
+        if sides >= 2:
+            valid.append(opening)
         else:
-            removed += 1
+            discarded += 1
+            logger.info(f"Discarded floating {opening.get('type')} bbox={bbox} ({sides} sides)")
 
-    logger.info(f"Component filter: kept={kept}, removed={removed} (furniture/annotations)")
-    return clean_mask
+    logger.info(f"Opening validation: kept={len(valid)}, discarded={discarded}")
+    metadata = dict(metadata)
+    metadata["openings"] = valid
+    return metadata
 
 
-# ── Validate openings against wall pixels ────────────────────────────────────
+# ── Step 4: Render purely from wall_mask + validated openings ─────────────────
 
-def _validate_openings(original_b64: str, metadata: dict) -> dict:
+def _render_from_wall_mask(wall_mask: "np.ndarray", metadata: dict) -> Optional[str]:
     """
-    Discard openings whose bbox doesn't touch dark (wall) pixels on ≥2 sides.
-    """
-    try:
-        import io
-        import numpy as np
-        from PIL import Image
-
-        image_bytes = base64.b64decode(original_b64)
-        img = Image.open(io.BytesIO(image_bytes)).convert("L")
-        arr = np.array(img)
-        h, w = arr.shape
-        wall_pixels = arr < 100
-
-        valid, discarded = [], 0
-        for opening in metadata.get("openings", []):
-            bbox = opening.get("bbox")
-            if not bbox or len(bbox) != 4:
-                continue
-            x1, y1, x2, y2 = int(bbox[0]), int(bbox[1]), int(bbox[2]), int(bbox[3])
-            x1, y1 = max(0, x1), max(0, y1)
-            x2, y2 = min(w, x2), min(h, y2)
-            if x2 <= x1 or y2 <= y1:
-                continue
-
-            m = 8  # margin px
-            sides = sum([
-                wall_pixels[max(0, y1-m):y1, x1:x2].any(),
-                wall_pixels[y2:min(h, y2+m), x1:x2].any(),
-                wall_pixels[y1:y2, max(0, x1-m):x1].any(),
-                wall_pixels[y1:y2, x2:min(w, x2+m)].any(),
-            ])
-            if sides >= 2:
-                valid.append(opening)
-            else:
-                discarded += 1
-                logger.info(f"Discarded floating {opening.get('type')} at {bbox}")
-
-        logger.info(f"Opening validation: kept={len(valid)}, discarded={discarded}")
-        metadata = dict(metadata)
-        metadata["openings"] = valid
-        return metadata
-    except Exception as e:
-        logger.error(f"Opening validation failed: {e}")
-        return metadata
-
-
-# ── Generate clean structural image ──────────────────────────────────────────
-
-def _generate_clean_structural(image_b64: str, metadata: dict) -> Optional[str]:
-    """
-    Produce a clean structural floor plan:
-    1. Binarize original image
-    2. Build wall mask (thick lines only)
-    3. Connected-component filter: keep only components touching walls
-    4. Render white background + black walls + colored door/window overlays
+    Render the structural floor plan from data only — no original image pixels.
+    - White canvas
+    - Black pixels from wall_mask (thick walls only, furniture already excluded)
+    - Red rectangles: doors and sliding doors
+    - Blue rectangles: windows
     """
     try:
-        import cv2
         import numpy as np
         import io
         from PIL import Image, ImageDraw
 
-        image_bytes = base64.b64decode(image_b64)
-        nparr = np.frombuffer(image_bytes, np.uint8)
-        img_bgr = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-        if img_bgr is None:
-            return None
+        h, w = wall_mask.shape
 
-        gray = cv2.cvtColor(img_bgr, cv2.COLOR_BGR2GRAY)
-        h, w = gray.shape
+        # White canvas, paint walls black
+        canvas = (np.ones((h, w, 3), dtype=np.uint8) * 255)
+        canvas[wall_mask > 0] = [0, 0, 0]
 
-        # Step 1: full binary (all dark pixels)
-        _, binary = cv2.threshold(gray, 200, 255, cv2.THRESH_BINARY_INV)
-
-        # Step 2: wall mask (thick lines survive erosion)
-        wall_mask = _detect_wall_mask(gray)
-
-        # Step 3: filter — keep only components touching walls
-        structural_mask = _filter_non_wall_components(binary, wall_mask)
-
-        # Step 4: white canvas, paint structural_mask black
-        canvas = np.ones((h, w, 3), dtype=np.uint8) * 255
-        canvas[structural_mask > 0] = [0, 0, 0]
-
-        # Step 5: PIL overlay for doors (red) and windows (blue)
         pil = Image.fromarray(canvas).convert("RGBA")
         overlay = Image.new("RGBA", pil.size, (0, 0, 0, 0))
         draw = ImageDraw.Draw(overlay)
@@ -242,7 +204,7 @@ def _generate_clean_structural(image_b64: str, metadata: dict) -> Optional[str]:
             if not bbox or len(bbox) != 4:
                 continue
             otype = opening.get("type", "")
-            color = (0, 80, 220, 200) if otype == "window" else (220, 30, 30, 200)
+            color = (0, 80, 220, 210) if otype == "window" else (220, 30, 30, 210)
             x1, y1, x2, y2 = [int(v) for v in bbox]
             draw.rectangle([x1, y1, x2, y2], fill=color)
 
@@ -252,37 +214,49 @@ def _generate_clean_structural(image_b64: str, metadata: dict) -> Optional[str]:
         return base64.b64encode(buf.getvalue()).decode("utf-8")
 
     except Exception as e:
-        logger.error(f"Clean structural generation failed: {e}", exc_info=True)
+        logger.error(f"Wall-mask render failed: {e}")
         return None
 
 
-# ── Main entry point ──────────────────────────────────────────────────────────
+# ── Main pipeline ─────────────────────────────────────────────────────────────
 
 async def process_floor_plan(image_b64: str) -> Tuple[Any, Optional[str], int]:
     """
-    Phase 1 pipeline:
-      1. Gemini: extract metadata (rooms, openings, scale) from original image
-      2. Validate: discard openings not touching wall pixels
-      3. OpenCV: connected-component filtering removes furniture/annotations
-      4. Render: clean white image with walls (black) + doors (red) + windows (blue)
+    Phase 1 — Structural Tracing pipeline:
+
+      1. OpenCV Canny + Morphological Close → canny_b64 (for Gemini) + wall_mask
+      2. Gemini on canny image → metadata (rooms, openings, scale)
+      3. Validate openings against wall_mask (discard floating ones)
+      4. Render from wall_mask only: white bg + black walls + colored openings
+         (no original image pixels — furniture never appears)
 
     Returns: (metadata, structural_image_b64, processing_time_ms)
     """
     start = time.monotonic()
     loop = asyncio.get_event_loop()
 
-    metadata = await loop.run_in_executor(None, _call_metadata, image_b64)
+    # Step 1 (sync, fast): Canny pre-processing
+    canny_b64, wall_mask, _gray = await loop.run_in_executor(
+        None, _preprocess_canny, image_b64
+    )
+
+    # Step 2: Gemini on canny image
+    metadata = await loop.run_in_executor(None, _call_metadata, canny_b64)
     logger.info(
         f"Gemini: rooms={len(metadata.get('rooms', []))}, "
         f"openings={len(metadata.get('openings', []))}, "
         f"error={metadata.get('error')}"
     )
 
+    # Step 3: validate openings against wall_mask
     if "error" not in metadata:
-        metadata = await loop.run_in_executor(None, _validate_openings, image_b64, metadata)
+        metadata = await loop.run_in_executor(
+            None, _validate_openings, wall_mask, metadata
+        )
 
+    # Step 4: render purely from wall_mask + validated openings
     structural_b64 = await loop.run_in_executor(
-        None, _generate_clean_structural, image_b64, metadata
+        None, _render_from_wall_mask, wall_mask, metadata
     )
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
