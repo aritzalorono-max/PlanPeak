@@ -73,7 +73,7 @@ class FloorPlanMetadata(BaseModel):
 
 class Phase1Response(BaseModel):
     structural_image_b64: Optional[str]
-    skeleton_image_b64: Optional[str]
+    skeleton_image_b64: Optional[str]  # now: contrast-enhanced image sent to Gemini
     metadata: Any
     processing_time_ms: int
 

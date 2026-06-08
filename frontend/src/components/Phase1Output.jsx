@@ -89,12 +89,12 @@ export default function Phase1Output({ sessionData, onProceed }) {
             : <div style={styles.imagePlaceholder}>No original image</div>}
         </div>
         <div style={styles.imagePane}>
-          <p style={styles.imageLabel}>Skeleton <span style={styles.labelNote}>(what Gemini sees)</span></p>
+          <p style={styles.imageLabel}>Enviado a Gemini <span style={styles.labelNote}>(contraste mejorado)</span></p>
           {skeletonSrc
-            ? <img src={skeletonSrc} alt="Wall skeleton" style={styles.image} />
-            : <div style={styles.imagePlaceholder}>Skeleton unavailable</div>}
+            ? <img src={skeletonSrc} alt="Imagen enviada a Gemini" style={styles.image} />
+            : <div style={styles.imagePlaceholder}>No disponible</div>}
           <div style={styles.imageLegend}>
-            <span style={{color:'#000',fontWeight:700}}>—</span> Wall segments (Hough lines)
+            Plano original con contraste CLAHE
           </div>
         </div>
         <div style={styles.imagePane}>
