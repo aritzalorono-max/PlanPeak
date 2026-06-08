@@ -1,5 +1,5 @@
 import React, { useRef, useState } from 'react'
-import axios from 'axios'
+import api from '../api'
 
 export default function UploadPanel({
   sessionData,
@@ -20,7 +20,7 @@ export default function UploadPanel({
     try {
       const formData = new FormData()
       formData.append('file', file)
-      const { data } = await axios.post('/api/upload', formData)
+      const { data } = await api.post('/api/upload', formData)
       onUploadComplete(data)
       setSelectedPage(1)
     } catch (err) {
@@ -46,7 +46,7 @@ export default function UploadPanel({
     setSelectedPage(pageNum)
     setError(null)
     try {
-      const { data } = await axios.post('/api/upload/select-page', {
+      const { data } = await api.post('/api/upload/select-page', {
         session_id: sessionData.sessionId,
         page_number: pageNum,
       })
@@ -61,7 +61,7 @@ export default function UploadPanel({
     setError(null)
     setProcessing(true)
     try {
-      const { data } = await axios.post('/api/phase1/process', {
+      const { data } = await api.post('/api/phase1/process', {
         session_id: sessionData.sessionId,
       })
       onPhase1Complete(data)
