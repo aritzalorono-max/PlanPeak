@@ -98,41 +98,39 @@ def _call_metadata(image_b64: str) -> Any:
         return {"error": str(e)}
 
 
-def _gemini_render_structural(image_b64: str) -> Optional[str]:
-    """Ask Gemini to generate a structural-only floor plan image."""
+def _render_structural_pil(image_b64: str, metadata: dict) -> Optional[str]:
+    """
+    Render structural floor plan using PIL:
+    - Base: original image converted to grayscale (walls/lines preserved)
+    - Doors and sliding doors: red semi-transparent overlay
+    - Windows: blue semi-transparent overlay
+    """
     try:
-        client = _get_client()
+        import io
+        from PIL import Image, ImageDraw
+
         image_bytes = base64.b64decode(image_b64)
+        img = Image.open(io.BytesIO(image_bytes)).convert("L").convert("RGB")  # grayscale → RGB
 
-        response = client.models.generate_content(
-            model=GEMINI_IMAGE_MODEL,
-            contents=[
-                types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
-                STRUCTURAL_PROMPT,
-            ],
-            config=types.GenerateContentConfig(
-                response_modalities=["IMAGE", "TEXT"],
-            ),
-        )
+        overlay = Image.new("RGBA", img.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
 
-        candidate = response.candidates[0] if response.candidates else None
-        if not candidate:
-            logger.warning("Gemini image generation: no candidates returned")
-            return None
+        for opening in metadata.get("openings", []):
+            bbox = opening.get("bbox")
+            if not bbox or len(bbox) != 4:
+                continue
+            otype = opening.get("type", "")
+            color = (0, 80, 220, 180) if otype == "window" else (220, 30, 30, 180)
+            x1, y1, x2, y2 = [int(v) for v in bbox]
+            draw.rectangle([x1, y1, x2, y2], fill=color)
 
-        for part in candidate.content.parts:
-            if part.inline_data and part.inline_data.mime_type.startswith("image/"):
-                return base64.b64encode(part.inline_data.data).decode("utf-8")
-
-        # Log what we got instead
-        text_parts = [p.text for p in candidate.content.parts if p.text]
-        logger.warning(f"Gemini image generation returned no image. Text parts: {text_parts[:3]}")
-        finish = candidate.finish_reason
-        logger.warning(f"Finish reason: {finish}")
-        return None
+        result = Image.alpha_composite(img.convert("RGBA"), overlay).convert("RGB")
+        buf = io.BytesIO()
+        result.save(buf, format="PNG")
+        return base64.b64encode(buf.getvalue()).decode("utf-8")
 
     except Exception as e:
-        logger.error(f"Gemini structural render failed: {e}", exc_info=True)
+        logger.error(f"PIL structural render failed: {e}")
         return None
 
 
@@ -140,7 +138,7 @@ async def process_floor_plan(
     image_b64: str,
 ) -> Tuple[Any, Optional[str], int]:
     """
-    Run metadata extraction and structural image generation in parallel via Gemini.
+    Run metadata extraction via Gemini, then render structural overlay with PIL.
 
     Returns:
         Tuple of (metadata_dict, structural_image_b64, processing_time_ms).
@@ -148,10 +146,8 @@ async def process_floor_plan(
     start = time.monotonic()
     loop = asyncio.get_event_loop()
 
-    metadata_future = loop.run_in_executor(None, _call_metadata, image_b64)
-    structural_future = loop.run_in_executor(None, _gemini_render_structural, image_b64)
-
-    metadata, structural_b64 = await asyncio.gather(metadata_future, structural_future)
+    metadata = await loop.run_in_executor(None, _call_metadata, image_b64)
+    structural_b64 = await loop.run_in_executor(None, _render_structural_pil, image_b64, metadata)
 
     elapsed_ms = int((time.monotonic() - start) * 1000)
     return metadata, structural_b64, elapsed_ms
