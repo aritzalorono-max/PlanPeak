@@ -19,12 +19,6 @@ def _session_dir(session_id: str) -> Path:
 
 
 def _get_image_b64_for_session(session_id: str) -> str:
-    """
-    Resolve the best available image for a session:
-    1. selected_page.png  (PDF page the user chose)
-    2. original.png       (direct image upload or normalised PNG)
-    3. original.jpg / .jpeg
-    """
     session_dir = _session_dir(session_id)
     for candidate in ["selected_page.png", "original.png", "original.jpg", "original.jpeg"]:
         p = session_dir / candidate
@@ -36,14 +30,6 @@ def _get_image_b64_for_session(session_id: str) -> str:
 
 @router.post("/process", response_model=Phase1Response)
 async def process_phase1(body: Phase1Request):
-    """
-    Run Phase 1 processing:
-    - Call A: Gemini cleans the floor plan image (returns base64 PNG).
-    - Call B: Gemini extracts semantic metadata (returns JSON).
-
-    Both calls are executed in parallel via asyncio.gather.
-    Results are persisted to the session directory.
-    """
     session_dir = _session_dir(body.session_id)
     if not session_dir.exists():
         raise HTTPException(status_code=404, detail="Session not found.")
@@ -54,30 +40,19 @@ async def process_phase1(body: Phase1Request):
         raise HTTPException(status_code=400, detail=str(e))
 
     try:
-        cleaned_b64, metadata, structural_b64, processing_time_ms = await gemini_service.process_floor_plan(
-            image_b64
-        )
+        metadata, structural_b64, processing_time_ms = await gemini_service.process_floor_plan(image_b64)
     except Exception as e:
         logger.error(f"Gemini processing failed for session {body.session_id}: {e}")
         raise HTTPException(status_code=500, detail=f"AI processing failed: {e}")
 
-    # Persist results to disk
-    if cleaned_b64:
-        cleaned_path = session_dir / "phase1_cleaned.png"
-        async with aiofiles.open(cleaned_path, "wb") as f:
-            await f.write(base64.b64decode(cleaned_b64))
-
     if structural_b64:
-        structural_path = session_dir / "phase1_structural.png"
-        async with aiofiles.open(structural_path, "wb") as f:
+        async with aiofiles.open(session_dir / "phase1_structural.png", "wb") as f:
             await f.write(base64.b64decode(structural_b64))
 
-    metadata_path = session_dir / "phase1_metadata.json"
-    async with aiofiles.open(metadata_path, "w") as f:
+    async with aiofiles.open(session_dir / "phase1_metadata.json", "w") as f:
         await f.write(json.dumps(metadata, ensure_ascii=False, indent=2))
 
     return Phase1Response(
-        cleaned_image_b64=cleaned_b64,
         structural_image_b64=structural_b64,
         metadata=metadata,
         processing_time_ms=processing_time_ms,

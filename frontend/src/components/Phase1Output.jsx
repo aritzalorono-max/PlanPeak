@@ -13,20 +13,12 @@ const ROOM_COLORS = {
 function RoomBadge({ type, label }) {
   const color = ROOM_COLORS[type] || ROOM_COLORS.unknown
   return (
-    <span
-      style={{
-        display: 'inline-block',
-        padding: '0.25rem 0.6rem',
-        borderRadius: 20,
-        background: color,
-        color: '#fff',
-        fontSize: '0.8rem',
-        fontWeight: 600,
-        margin: '0.2rem',
-        textTransform: 'capitalize',
-      }}
-    >
-      {label || type.replace('_', ' ')}
+    <span style={{
+      display: 'inline-block', padding: '0.25rem 0.6rem', borderRadius: 20,
+      background: color, color: '#fff', fontSize: '0.8rem', fontWeight: 600,
+      margin: '0.2rem', textTransform: 'capitalize',
+    }}>
+      {label || type.replace(/_/g, ' ')}
     </span>
   )
 }
@@ -35,32 +27,18 @@ function JsonViewer({ data }) {
   const [open, setOpen] = useState(false)
   return (
     <div style={{ marginTop: '1rem' }}>
-      <button
-        onClick={() => setOpen(o => !o)}
-        style={{
-          background: 'none',
-          border: '1px solid #ccc',
-          borderRadius: 6,
-          padding: '0.4rem 0.8rem',
-          cursor: 'pointer',
-          fontSize: '0.875rem',
-        }}
-      >
+      <button onClick={() => setOpen(o => !o)} style={{
+        background: 'none', border: '1px solid #ccc', borderRadius: 6,
+        padding: '0.4rem 0.8rem', cursor: 'pointer', fontSize: '0.875rem',
+      }}>
         {open ? '▼ Hide raw JSON' : '▶ Show raw JSON'}
       </button>
       {open && (
-        <pre
-          style={{
-            background: '#1e1e1e',
-            color: '#d4d4d4',
-            padding: '1rem',
-            borderRadius: 8,
-            overflow: 'auto',
-            maxHeight: 400,
-            fontSize: '0.78rem',
-            marginTop: '0.5rem',
-          }}
-        >
+        <pre style={{
+          background: '#1e1e1e', color: '#d4d4d4', padding: '1rem',
+          borderRadius: 8, overflow: 'auto', maxHeight: 400,
+          fontSize: '0.78rem', marginTop: '0.5rem',
+        }}>
           {JSON.stringify(data, null, 2)}
         </pre>
       )}
@@ -77,13 +55,12 @@ export default function Phase1Output({ sessionData, onProceed }) {
     )
   }
 
-  const { cleanedImageB64, structuralImageB64, metadata, processingTimeMs } = sessionData.phase1
+  const { structuralImageB64, metadata, processingTimeMs } = sessionData.phase1
   const originalSrc = sessionData.selectedPageB64
     ? `data:image/png;base64,${sessionData.selectedPageB64}`
     : sessionData.previewB64
     ? `data:image/png;base64,${sessionData.previewB64}`
     : null
-  const cleanedSrc = cleanedImageB64 ? `data:image/png;base64,${cleanedImageB64}` : null
   const structuralSrc = structuralImageB64 ? `data:image/png;base64,${structuralImageB64}` : null
 
   const rooms = metadata?.rooms || []
@@ -100,63 +77,36 @@ export default function Phase1Output({ sessionData, onProceed }) {
       </div>
 
       {metadata?.error && (
-        <div style={styles.warning}>
-          Metadata extraction warning: {metadata.error}
-        </div>
+        <div style={styles.warning}>Metadata extraction warning: {metadata.error}</div>
       )}
 
-      {/* Three-way image view */}
       <div style={styles.imageRow}>
         <div style={styles.imagePane}>
           <p style={styles.imageLabel}>Original</p>
-          {originalSrc ? (
-            <img src={originalSrc} alt="Original floor plan" style={styles.image} />
-          ) : (
-            <div style={styles.imagePlaceholder}>No original image</div>
-          )}
-        </div>
-        <div style={styles.imagePane}>
-          <p style={styles.imageLabel}>Cleaned (OpenCV)</p>
-          {cleanedSrc ? (
-            <img src={cleanedSrc} alt="Cleaned floor plan" style={styles.image} />
-          ) : (
-            <div style={styles.imagePlaceholder}>Cleaned image unavailable</div>
-          )}
+          {originalSrc
+            ? <img src={originalSrc} alt="Original floor plan" style={styles.image} />
+            : <div style={styles.imagePlaceholder}>No original image</div>}
         </div>
         <div style={styles.imagePane}>
           <p style={styles.imageLabel}>Structural</p>
           <div style={styles.imageLegend}>
-            <span style={{color:'#000', fontWeight:700}}>■</span> Walls &nbsp;
-            <span style={{color:'red', fontWeight:700}}>■</span> Doors &nbsp;
-            <span style={{color:'blue', fontWeight:700}}>■</span> Windows
+            <span style={{color:'#000',fontWeight:700}}>■</span> Walls &nbsp;
+            <span style={{color:'red',fontWeight:700}}>■</span> Doors &nbsp;
+            <span style={{color:'blue',fontWeight:700}}>■</span> Windows
           </div>
-          {structuralSrc ? (
-            <img src={structuralSrc} alt="Structural floor plan" style={styles.image} />
-          ) : (
-            <div style={styles.imagePlaceholder}>
-              {metadata?.walls?.length === 0 && metadata?.openings?.length === 0
-                ? 'No walls or openings detected yet'
-                : 'Structural render unavailable'}
-            </div>
-          )}
+          {structuralSrc
+            ? <img src={structuralSrc} alt="Structural floor plan" style={styles.image} />
+            : <div style={styles.imagePlaceholder}>Structural render unavailable</div>}
         </div>
       </div>
 
-      {/* Metadata summary */}
       <div style={styles.summaryGrid}>
-        {/* Rooms */}
         <div style={styles.card}>
           <h3 style={styles.cardTitle}>Rooms detected ({rooms.length})</h3>
-          {rooms.length > 0 ? (
-            rooms.map((r, i) => (
-              <RoomBadge key={i} type={r.type} label={r.label} />
-            ))
-          ) : (
-            <p style={styles.empty}>No rooms detected</p>
-          )}
+          {rooms.length > 0
+            ? rooms.map((r, i) => <RoomBadge key={i} type={r.type} label={r.label} />)
+            : <p style={styles.empty}>No rooms detected</p>}
         </div>
-
-        {/* Openings */}
         <div style={styles.card}>
           <h3 style={styles.cardTitle}>Openings detected ({openings.length})</h3>
           <p style={styles.stat}>
@@ -165,41 +115,23 @@ export default function Phase1Output({ sessionData, onProceed }) {
             <strong>{windows.length}</strong> window{windows.length !== 1 ? 's' : ''}
           </p>
         </div>
-
-        {/* Scale references */}
         <div style={styles.card}>
           <h3 style={styles.cardTitle}>Scale references ({scaleRefs.length})</h3>
-          {scaleRefs.length > 0 ? (
-            <ul style={styles.list}>
-              {scaleRefs.map((s, i) => (
-                <li key={i}>
-                  {s.value} {s.unit}
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p style={styles.empty}>None detected</p>
-          )}
+          {scaleRefs.length > 0
+            ? <ul style={styles.list}>{scaleRefs.slice(0, 6).map((s, i) => <li key={i}>{s.value} {s.unit}</li>)}</ul>
+            : <p style={styles.empty}>None detected</p>}
           {metadata?.estimated_scale && (
             <p style={styles.scale}>Estimated scale: <strong>{metadata.estimated_scale}</strong></p>
           )}
         </div>
-
-        {/* Image dimensions */}
         <div style={styles.card}>
           <h3 style={styles.cardTitle}>Image info</h3>
-          {metadata?.image_dimensions ? (
-            <p>{metadata.image_dimensions.width} × {metadata.image_dimensions.height} px</p>
-          ) : (
-            <p style={styles.empty}>—</p>
-          )}
-          {metadata?.north_arrow?.detected && (
-            <p>North arrow: detected</p>
-          )}
+          {metadata?.image_dimensions
+            ? <p>{metadata.image_dimensions.width} × {metadata.image_dimensions.height} px</p>
+            : <p style={styles.empty}>—</p>}
         </div>
       </div>
 
-      {/* Raw JSON viewer */}
       <JsonViewer data={metadata} />
 
       <button style={styles.proceedBtn} onClick={onProceed}>
@@ -219,14 +151,13 @@ const styles = {
     padding: '0.75rem 1rem', marginBottom: '1rem', color: '#e65100',
   },
   imageRow: { display: 'flex', gap: '1.5rem', marginBottom: '1.5rem', flexWrap: 'wrap' },
-  imagePane: { flex: '1 1 300px', minWidth: 0 },
+  imagePane: { flex: '1 1 420px', minWidth: 0 },
+  imageLabel: { fontWeight: 600, margin: '0 0 0.25rem' },
   imageLegend: { fontSize: '0.78rem', color: '#555', marginBottom: '0.4rem' },
-  imageLabel: { fontWeight: 600, margin: '0 0 0.5rem' },
   image: { width: '100%', borderRadius: 8, border: '1px solid #ddd', display: 'block' },
   imagePlaceholder: {
     height: 300, display: 'flex', alignItems: 'center', justifyContent: 'center',
     background: '#f5f5f5', border: '1px dashed #ccc', borderRadius: 8, color: '#888',
-    textAlign: 'center', padding: '1rem',
   },
   summaryGrid: { display: 'grid', gridTemplateColumns: 'repeat(auto-fill, minmax(220px, 1fr))', gap: '1rem', marginBottom: '1rem' },
   card: { background: '#fff', border: '1px solid #e0e0e0', borderRadius: 10, padding: '1rem' },
@@ -236,14 +167,8 @@ const styles = {
   list: { margin: '0 0 0.5rem', paddingLeft: '1.25rem', fontSize: '0.875rem' },
   scale: { margin: 0, fontSize: '0.875rem' },
   proceedBtn: {
-    marginTop: '1.5rem',
-    padding: '0.85rem 2rem',
-    background: '#1e3a5f',
-    color: '#fff',
-    border: 'none',
-    borderRadius: 8,
-    fontSize: '1rem',
-    fontWeight: 600,
-    cursor: 'pointer',
+    marginTop: '1.5rem', padding: '0.85rem 2rem', background: '#1e3a5f',
+    color: '#fff', border: 'none', borderRadius: 8, fontSize: '1rem',
+    fontWeight: 600, cursor: 'pointer',
   },
 }
